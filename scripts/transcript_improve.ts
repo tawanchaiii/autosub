@@ -1,6 +1,8 @@
 import fs from "fs";
 import { getPartName } from "../src/getPartName";
 import { invokeLLM } from "../src/invokeLLM";
+import { GoogleGenerativeAI, HarmBlockThreshold, HarmCategory, UsageMetadata } from "@google/generative-ai";
+import { LineLogger } from "../src/LineLogger";
 
 const partName = getPartName();
 
@@ -44,13 +46,76 @@ const input = fs.existsSync(`artifacts/${partName}.gemini_video_transcript.txt`)
   : fs.readFileSync(`artifacts/${partName}.gemini_transcript.txt`, "utf8");
 
 const promptInput = prompt.replace("{{TRANSCRIPT}}", input);
-fs.writeFileSync(
-  `artifacts/${partName}.improved_transcript.prompt.txt`,
-  promptInput
+
+// fs.writeFileSync(
+//   `artifacts/${partName}.improved_transcript.prompt.txt`,
+//   promptInput
+// );
+
+// await invokeLLM({
+//   prompt: promptInput,
+//   outputPath: `artifacts/${partName}.improved_transcript.txt`,
+//   usagePath: `artifacts/${partName}.improved_transcript.usage.json`,
+// });
+
+const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY!);
+const usePro = process.env.GEMINI_MODEL !== "flash";
+const modelName = usePro ? "gemini-1.5-pro-exp-0801" : "gemini-1.5-flash";
+let temperature = +process.env.GEMINI_TEMPERATURE!;
+if (isNaN(temperature)) temperature = usePro ? 0.25 : 0.5;
+const model = genAI.getGenerativeModel({
+  model: modelName,
+  generationConfig: {
+    temperature,
+    maxOutputTokens: 8192,
+  },
+  safetySettings: [
+    {
+      category: HarmCategory.HARM_CATEGORY_HARASSMENT,
+      threshold: HarmBlockThreshold.BLOCK_NONE,
+    },
+    {
+      category: HarmCategory.HARM_CATEGORY_HATE_SPEECH,
+      threshold: HarmBlockThreshold.BLOCK_NONE,
+    },
+    {
+      category: HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT,
+      threshold: HarmBlockThreshold.BLOCK_NONE,
+    },
+    {
+      category: HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT,
+      threshold: HarmBlockThreshold.BLOCK_NONE,
+    },
+  ],
+});
+
+const result = await model.generateContentStream([
+  { text: promptInput },
+]);
+
+const out = fs.createWriteStream(
+  `artifacts/${partName}.improved_transcript.txt`
 );
 
-await invokeLLM({
-  prompt: promptInput,
-  outputPath: `artifacts/${partName}.improved_transcript.txt`,
-  usagePath: `artifacts/${partName}.improved_transcript.usage.json`,
-});
+const logger = new LineLogger();
+let usage: UsageMetadata | undefined;
+for await (const chunk of result.stream) {
+  const chunkText = chunk.text();
+  logger.add(
+    chunkText,
+    chunk.usageMetadata
+      ? `${chunk.usageMetadata.promptTokenCount} in, ${chunk.usageMetadata.candidatesTokenCount} out`
+      : ""
+  );
+  out.write(chunkText);
+  process.stdout.write(".");
+  usage = chunk.usageMetadata || usage;
+}
+
+out.end();
+logger.finish();
+fs.writeFileSync(
+  `artifacts/${partName}.improved_transcript.usage.json`,
+  JSON.stringify({ ...(usage || {}), modelName }, null, 2)
+);
+
