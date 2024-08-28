@@ -62,4 +62,6 @@ async function processPart3(partName: string): Promise<boolean> {
 
 const parts = JSON.parse(fs.readFileSync("artifacts/parts.json", "utf8"));
 
-limitedLoop(parts.length, 2, processPart3);
+await limitedLoop(parts.length, 2, processPart);
+await limitedLoop(parts.length, 2, processPart2);
+await limitedLoop(parts.length, 2, processPart3);
