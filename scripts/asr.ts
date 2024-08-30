@@ -14,7 +14,7 @@ sm.batch
     { data: input, fileName: basename(process.cwd()) + "_audio.mp3" },
     {
       transcription_config: {
-        language: "th",
+        language: process.env.SPEECHMATICS_LANGUAGE || "th",
         operating_point: "standard", // enhanced
       },
     },
